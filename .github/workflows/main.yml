@@ -37,7 +37,7 @@ jobs:
       uses: burnett01/rsync-deployments@4.0
       with:  
         switches: -avzr --delete
-        path: ./dist/*
+        path: ./public/*
         remote_path: /data/blog.clmystes.teck
         remote_host: 119.45.17.173
         remote_user: root
