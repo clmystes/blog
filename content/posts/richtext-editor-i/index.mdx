@@ -1,13 +1,10 @@
 ---
 title: 富文本编辑器概览
-date: 2020-07-15
+date: 2020-07-25
 ---
 
-富文本编辑器一直被认为是前端领域的难点以及[天坑](https://www.zhihu.com/question/38699645)，
-但是对于没有接触过富文本编辑器开发的同学，可能只有一个困难的印象，但是不知道具体的难点在哪。
-希望通过本文的介绍能让大家更好的了解这一领域。
+本文通过介绍富文本编辑器中的一些概念，帮助大家了解这个前端领域中[天坑](https://www.zhihu.com/question/38699645)。
 
-- [定义](#定义)
 - [分类](#分类)
   - [L0](#l0)
   - [L1](#l1)
@@ -17,14 +14,7 @@ date: 2020-07-15
   - [协同编辑](#协同编辑)
     - [Operational Transformation（OT）](#operational-transformationot)
     - [Conflict-Free Replicated Data Types (CRDT)](#conflict-free-replicated-data-types-crdt)
-- [尾](#尾)
 - [参考资料](#参考资料)
-
-## 定义
-
-> An online rich-text editor is the interface for editing rich text within web browsers, which presents the user with a "what-you-see-is-what-you-get" (WYSIWYG) editing area. The aim is to reduce the effort for users trying to express their formatting directly as valid HTML markup.
-
-引用[维基百科的定义](https://en.wikipedia.org/wiki/Online_rich-text_editor)，web 端富文本编辑器即：基于浏览器的，拥有*所见即所得*功能的编辑器。
 
 ## 分类
 
@@ -41,7 +31,7 @@ date: 2020-07-15
 ### L2
 
 使用 `Canvas` 或其他基础绘图能力实现排版，布局，输入等功能，实现难度非常大，相当于从 0 实现自研 `Word`，目前只有少数有实力大厂选用了这个方案，比如:
-`iCloud Pages`, `Google Doc`(经朋友指正，`Google Doc` 也放弃了这个选型，采用 L1 方案)。
+`iCloud Pages`, `Google Doc`。
 
 ## 一些概念
 
@@ -61,7 +51,6 @@ date: 2020-07-15
 
 `HTML` 的这种特性无疑让我们的*序列化存储*与*反序列化渲染到界面*的流程变得非常复杂，因此当前主流解决方案都是维护一个自己内部的 `schema`。
 当 `ContentEditable` 区域或其他操作的事件要触发变更时, 发送变更 `action` 到 `schema`，视图层再根据 `schema` 的变化渲染。
-这一步是不是很像 `React`, `Vue` 等的*数据驱动视图*的概念，就是这些先进理念的互相融合促进了前端技术的发展。
 
 ### 协同编辑
 
@@ -109,13 +98,8 @@ transform(
 一般来说文档协同编辑都是 `OT` 一把梭，`CRDT` 个人也不是很了解，有兴趣的同学可以自行查找资料。
 代表是 GitHub 团队开源的 [teletype-crdt](https://github.com/atom/teletype-crdt)，ATOM 编辑器的协作功能就是基于这个库来实现的。
 
-## 尾
-
-富文本编辑器涉及的知识还有很多，本文只是简单介绍了一些概念，之后可能会挑选一些实际研发中遇到的难点再详细说说（不鸽的话）。
-
 ## 参考资料
 
 - [钉钉文档编辑器的前世今生](https://zhuanlan.zhihu.com/p/157215963)
 - [多人协同编辑实现](https://github.com/Aaaaash/blog/issues/10)
 - [主流的开源「富文本编辑器」都有什么缺陷？](https://www.zhihu.com/question/404836496)
-- https://www.zhihu.com/question/367915946/answer/985845505
