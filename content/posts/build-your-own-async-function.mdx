@@ -1,0 +1,133 @@
+---
+title: Build Your Own Async Function
+date: 2020-07-32
+---
+
+本文会以 [co](https://github.com/tj/co) 源码为参考，自己实现一个 `async function`。
+
+## Generator
+
+在实现之前先了解一下 `JS` 中的生成器，因为 `async function` 本质上就是一个自动执行的生成器函数。
+
+执行一个 `generator function` 时，会返回一个 `iterator`，且函数体的代码并不会立即执行。当执行这个 `iterator` 的 `next` 方法时，
+会重新进入函数并执行到遇到的第一个 `yield` 语句，`next` 方法将会返回一个对象:
+
+```javascript
+{
+  value: "yield 返回值"
+  done: "是否 yield 了最后一个值"
+}
+```
+
+举个例子🌰
+
+```javascript
+const foo = function* () {
+  yield 10;
+  yield 20;
+};
+
+const bar = foo();
+console.log(bar.next()); // {value: 10, done: false}
+```
+
+## 思路
+
+现在有下面两个函数
+
+```javascript
+(async () => {
+  await Promise.resolve(1)
+})()
+
+function* foo() {
+  yield Promise.resolve(1)
+}
+```
+
+由 `generator` 的特性我们可以想到：如果可以让 `foo` 函数自动执行，并且每次 `yield` 时，返回的是 `yielded value` `resolve` 后的值，这两个函数就是相等的了。
+因此我们最终的调用方法是
+
+```javascript
+co(function* () {
+  yield Promise.resolve(1)
+})
+```
+
+## 实现
+
+`co` 的第一个参数是一个 `generator function`，后面可以接收其他参数传递给第一个参数函数，并且 `async function` 返回值是可以被 `thenable` 的。
+
+```javascript
+function co(gen) {
+  const args = Array.prototype.slice.call(arguments, 1)
+  return new Promise((resolve, reject) => {
+
+  })
+}
+```
+
+检测入参，如果是函数直接执行(可能是普通函数或 `generator`)。检查返回值如果不是一个 `iterator` 就直接 `resolve` 掉。（每次新增的代码会高亮显示）
+
+```javascript
+function co(gen) {
+  const args = Array.prototype.slice.call(arguments, 1)
+  return new Promise((resolve, reject) => {
+    // highlight-start
+    if(typeof gen === "function") gen = gen.apply(this, args)
+    if(!gen || typeof gen.next !== function) return resolve(gen)
+    // highlight-end
+  })
+}
+```
+
+到这里，我们开始执行第一个 `next`，并检查返回值:
+
+- 如果 `done` 为真，表示执行结束，返回 `value` 即可
+- 检查 `yield` 的值是否可以被规整化为 `Promise`，`co` 的实现可以支持多种形式的 `Promise`，比如数组，对象，对这些拓展感兴趣可以看具体的源码实现。
+  - 可以：取得 `resolve` 的值，传递给下一个 `next` 调用，这样就可以自动执行完所有的函数了
+  - 不可以：直接报错
+
+```javascript
+function co(gen) {
+  const args = Array.prototype.slice.call(arguments, 1)
+  return new Promise((resolve, reject) => {
+    if(typeof gen === "function") gen = gen.apply(this, args)
+    if(!gen || typeof gen.next !== "function") return resolve(gen)
+    // highlight-start
+
+    onFulfilled()
+
+    function onFulfilled(res) {
+      let ret
+      try {
+        ret = gen.next(res)
+      } catch(e) {
+        return reject(e)
+      }
+      next(ret)
+    }
+
+    function onRejected(err) {
+      let ret
+      try {
+        ret = gen.throw(err)
+      } catch(e) {
+        return reject(e)
+      }
+      next(ret)
+    }
+
+    function next(ret) {
+      if(ret.done) return resolve(ret.value)
+      if(isPromise(ret.value)) return ret.value.then(onFulfilled, onRejected)
+      return onRejected(new TypeError("must yield a promise"))
+    }
+    // highlight-end
+  })
+}
+
+function isPromise(obj) {
+  return obj && "function" === typeof obj.then
+}
+```
