@@ -1,0 +1,102 @@
+---
+title: 如何实现一个洋葱模型的中间件
+date: 2020-08-07
+---
+
+上一篇文章分析了 [co](https://github.com/tj/co) 的源码，这次我们会继续分析 [tj](https://github.com/tj) 的另一个作品 [compose](https://github.com/koajs/compose)，
+理解 [koa](https://github.com/koajs) 中的基于洋葱模型的中间件是如何实现的。
+
+## 什么是洋葱模型的中间件
+
+先看一个 Koa 官网的例子: 获取请求的响应时间，体验下使用洋葱模型的中间件是多么的简单优雅
+
+```js
+const Koa = require('koa');
+const app = new Koa();
+
+// logger
+
+app.use(async (ctx, next) => {
+  await next();
+  const rt = ctx.response.get('X-Response-Time');
+  console.log(`${ctx.method} ${ctx.url} - ${rt}`);
+});
+
+// x-response-time
+
+app.use(async (ctx, next) => {
+  const start = Date.now();
+  await next();
+  const ms = Date.now() - start;
+  ctx.set('X-Response-Time', `${ms}ms`);
+});
+
+// response
+
+app.use(async ctx => {
+  ctx.body = 'Hello World';
+});
+
+app.listen(3000);
+```
+
+这里程序的流向是:
+
+-> 请求到达，进入第一个中间件 `logger`
+
+-> 遇到 `next` 把程序控制权交给下一个中间件 `x-response-time`
+
+-> `x-response-time` 记录下进入时间后，`next` 再把控制权交出
+
+-> 发现之后没有更多的中间件了，开始从后向前恢复中间件的执行
+
+-> 先执行 `x-response-time` 把响应时间设置到响应头上
+
+-> 在执行 `logger` 打印出响应时间
+
+用一张经典的图来表示
+
+![onion-model.png](https://i.loli.net/2020/08/07/oyqwNpF9L23DgWX.png)
+
+## 源码实现
+
+`compose` 的实现非常的精简，利用递归的特性很巧妙的实现了洋葱模型中间件，这里直接把相关分析写到下面的代码中。
+
+```js
+// middleware: 中间件集合数组 [m1. m2. m3]
+function compose (middleware) {
+  // 参数检查，不多赘述
+  if (!Array.isArray(middleware)) throw new TypeError('Middleware stack must be an array!')
+  for (const fn of middleware) {
+    if (typeof fn !== 'function') throw new TypeError('Middleware must be composed of functions!')
+  }
+
+  return function (context, next) {
+    // last called middleware #
+    let index = -1
+    return dispatch(0)
+    function dispatch (i) {
+      if (i <= index) return Promise.reject(new Error('next() called multiple times'))
+      // 这里执行 next() 时，把当前 i 的值赋值给 index, 所以当重复调用 next 会导致 index === i ，以此检查 next 多次调用的情况
+      index = i
+
+      let fn = middleware[i]
+      // 当所有中间件执行完毕，调用初始化传入的 next
+      if (i === middleware.length) fn = next
+
+      // 没有中间件直接返回 resolve
+      if (!fn) return Promise.resolve()
+
+      try {
+        // 这里实际上是把 dispatch(n+1) 当做 next 传入 dispatch(n)
+        // 因此当调用 next 时，会执行 dispatch(n+1) 也就是下一个中间件
+        return Promise.resolve(fn(context, dispatch.bind(null, i + 1)));
+        // 为什么不使用 () => dispatch(i + 1) 呢，而要绑定一个 null 的 this
+        // 实际上这两个函数都是可以的，但是使用 Bind 可以节省一个函数声明，并因此可以减少调用栈的大小
+      } catch (err) {
+        return Promise.reject(err)
+      }
+    }
+  }
+}
+```
