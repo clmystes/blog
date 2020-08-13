@@ -1,0 +1,307 @@
+---
+title: "[译文] The unknown Type in TypeScript"
+date: 2020-08-13
+---
+
+> 原文链接: https://mariusschulz.com/blog/the-unknown-type-in-typescript
+
+> 作者: Marius Schulz
+
+TypeScript 3.0 介绍了一种新的类型 `unknown` ，可以视为类型安全的 `any`
+
+`unknown` 和 `any` 最主要的区别是 `unknown` 比 `any` 更为严格：在大多数情况下，操作 `unknow` 值会进行
+多种形式的检查，而 `any` 则不会做任何检查。
+
+这篇文章主要关注在 `unknow` 的实际使用场景以及和 `any` 类型的对比。如果希望通过全面的代码示例去了解 `unknown`
+的语义，可以查看这个 PR [Anders Hejlsberg's original pull request](https://github.com/Microsoft/TypeScript/pull/24439) 。
+
+## The any Type
+
+让我们首先看一下 `any` 类型，以便于更好的理解 `unknown` 出现的动机。
+
+在 2012 年 TypeScript 就已经提供了 `any` 类型。`any` 表示所有可能的 JavaScript 值 -- primitives, objects, arrays, functions, errors, symbols。
+
+在 TypeScipt 中，任何类型都可以赋值给 `any` 类型的值。这使得 `any` 成为类型系统中的 [top type](https://en.wikipedia.org/wiki/Top_type)，也被称为 universal supertype。
+
+下面的示例展示了我们可以把任何值赋值给 `any` 类型的值:
+
+```js
+let value: any;
+
+value = true;             // OK
+value = 42;               // OK
+value = "Hello World";    // OK
+value = [];               // OK
+value = {};               // OK
+value = Math.random;      // OK
+value = null;             // OK
+value = undefined;        // OK
+value = new TypeError();  // OK
+value = Symbol("type");   // OK
+```
+
+`any` 类型就像是类型系统中的 `escape hatch` ，给与了开发者非常大的自由度：TypeScript 让我们能够
+在 `any` 类型上做任何操作而不用进行类型检查。
+
+在上面的例子中，`value` 是 `any` 类型的，因此，TypeScript 会认为以下操作也都是类型正确的:
+
+```js
+let value: any;
+
+value.foo.bar;  // OK
+value.trim();   // OK
+value();        // OK
+new value();    // OK
+value[0][1];    // OK
+```
+
+在许多场景中，这样就会显得过于自由了。使用 `any` 类型会使得编译时类型检查非常容易通过，但却把隐藏的问题留到
+了运行时。如果我们使用了 `any` 就等于放弃了 TypeScript 提供的类型保护。
+
+那么有没有一种类型安全的 top type 呢？这就是 `unknown` 类型。
+
+## The unknown Type
+
+就像所有的类型都可以赋值给 `any` 一样，`unknown` 也是如此。因此它是在 TypeScipt 类型系统中的另一个 top type。
+
+下面是是和 `any` 一样的例子:
+
+```js
+let value: unknown;
+
+value = true;             // OK
+value = 42;               // OK
+value = "Hello World";    // OK
+value = [];               // OK
+value = {};               // OK
+value = Math.random;      // OK
+value = null;             // OK
+value = undefined;        // OK
+value = new TypeError();  // OK
+value = Symbol("type");   // OK
+```
+
+所有赋值都被认为是类型正确的。
+
+那么如果我们把 `unknown` 类型的值赋值给其他类型呢:
+
+```js
+let value: unknown;
+
+let value1: unknown = value;   // OK
+let value2: any = value;       // OK
+let value3: boolean = value;   // Error
+let value4: number = value;    // Error
+let value5: string = value;    // Error
+let value6: object = value;    // Error
+let value7: any[] = value;     // Error
+let value8: Function = value;  // Error
+```
+
+结果是 `unknown` 只能赋值给 `unknown` 或 `any` 。这是非常符合直觉的：因为我们不知道 `unknown` 里究竟
+存储了什么值，所以只有能存储任意类型的 `any` `unknown` 可以被赋值。
+
+下面让我们尝试下在 `unknown` 上调用任意方法:
+
+```js
+let value: unknown;
+
+value.foo.bar;  // Error
+value.trim();   // Error
+value();        // Error
+new value();    // Error
+value[0][1];    // Error
+```
+
+当 `value` 是 `unknown` 类型时，这些操作都会使得类型检查失败。
+
+这就是 `unknown` 主要目的：TypeScript 不会让我们在 `unknown` 上执行任意操作，取而代之的是，
+我们需要做一些检查，来使得类型收窄，从而执行通过。
+
+## Narrowing the unknown Type
+
+我们可以收窄 `unknown` 的类型使用很多方法，包括使用 `typeof`, `instanceof` 以及自定义的类型守卫函数。
+这些操作都有助于 TypeScript 的 [control flow based type analysis](https://mariusschulz.com/blog/typescript-2-0-control-flow-based-type-analysis)。
+
+下面的例子展示了 `value` 是如何通过 `if` 来收窄类型的:
+
+```js
+function stringifyForLogging(value: unknown): string {
+  if (typeof value === "function") {
+    // Within this branch, `value` has type `Function`,
+    // so we can access the function's `name` property
+    const functionName = value.name || "(anonymous)";
+    return `[function ${functionName}]`;
+  }
+
+  if (value instanceof Date) {
+    // Within this branch, `value` has type `Date`,
+    // so we can call the `toISOString` method
+    return value.toISOString();
+  }
+
+  return String(value);
+}
+```
+
+这是另一个例子:
+
+```js
+/**
+ * A custom type guard function that determines whether
+ * `value` is an array that only contains numbers.
+ */
+function isNumberArray(value: unknown): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.every(element => typeof element === "number")
+  );
+}
+
+const unknownValue: unknown = [15, 23, 8, 4, 42, 16];
+
+if (isNumberArray(unknownValue)) {
+  // Within this branch, `unknownValue` has type `number[]`,
+  // so we can spread the numbers as arguments to `Math.max`
+  const max = Math.max(...unknownValue);
+  console.log(max);
+}
+```
+
+注意 即使 `unknownValue` 被声明为 `unknown` ，在通过 `if` 语句后，他就拥有了 `number[]` 的类型。
+
+## Using Type Assertions with unknown
+
+上一节，我们尝试使用了 `typeof`, `instanceof` 以及自定义函数使得 TS 的编译器推断出 `value` 的真正类型。
+这是安全也是十分推荐的方案去收窄 `unknown` 的类型。
+
+如果你想强制编译器确定 `unknown` 的类型，可以使用 `type assertion`:
+
+```js
+const value: unknown = "Hello World";
+const someString: string = value as string;
+const otherString = someString.toUpperCase();  // "HELLO WORLD"
+```
+
+注意：TS 不会有额外的检查去确保类型断言的正确性，因此这样很容易出错
+
+```js
+const value: unknown = 42;
+const someString: string = value as string;
+const otherString = someString.toUpperCase();  // BOOM
+```
+
+## The unknown Type in Union Types
+
+现在让我们看看 `unknown` 在联合类型中是如何表现的，下一节我们将看看交叉类型。
+
+在联合类型中，如果有任意一个类型是 `unknown` 那这个联合类型就被认为是 `unknown`。
+有一个例外，如果出现了 `any` ，会被认为是 `any`。
+
+```js
+type UnionType1 = unknown | null;       // unknown
+type UnionType2 = unknown | undefined;  // unknown
+type UnionType3 = unknown | string;     // unknown
+type UnionType4 = unknown | number[];   // unknown
+type UnionType5 = unknown | any;  // any
+```
+
+因此为什么 `unknown` 会吸收其他的类型（除了 `any`）呢？以 `unknown | string` 为例，表示所有可以被
+赋值给 `unknown` 的加上可以赋值给 `string` 的类型，因为 `unknown` 是 top type，包括了 `string` 所以
+编译器可以简单把这个联合类型认为是 `unknown`。
+
+## The unknown Type in Intersection Types
+
+交叉类型中，`unknown` 不会影响最终的类型:
+
+```js
+type IntersectionType1 = unknown & null;       // null
+type IntersectionType2 = unknown & undefined;  // undefined
+type IntersectionType3 = unknown & string;     // string
+type IntersectionType4 = unknown & number[];   // number[]
+type IntersectionType5 = unknown & any;        // any
+```
+
+以 `unknown & string` 为例，因为 `unkown` 包括所有类型，因此取他和 `string` 的交集即为 `string`。
+
+## Using Operators with Values of Type unknown
+
+`unknown` 类型不能被用在大部分操作符上，因为不知道具体的类型，大多数操作符不会产生有意义的结果。
+唯一可以用的是 `===`, `==`, `!=`, `!==` 这四个相等操作符。
+如果想要使用其他操作符，必须先进行类型收窄。
+
+## Example: Reading JSON from localStorage
+
+下面是一个使用 `unknown` 的实例。
+
+假设，我们要写一个函数，从 `localStorage` 中读取值并解析成 JSON。如果值不存在或不是一个合法的 JSON，应该
+返回一个错误，否则返回正确的 JSON。
+
+因为我们不知道最终生成的 JSON 是什么结构，所以一开始使用 `unknown` 声明。这意味着函数的调用者在使用返回值之前，
+需要进行额外的检查以类型收窄。
+
+```js
+type Result =
+  | { success: true, value: unknown }
+  | { success: false, error: Error };
+
+function tryDeserializeLocalStorageItem(key: string): Result {
+  const item = localStorage.getItem(key);
+
+  if (item === null) {
+    // The item does not exist, thus return an error result
+    return {
+      success: false,
+      error: new Error(`Item with key "${key}" does not exist`)
+    };
+  }
+
+  let value: unknown;
+
+  try {
+    value = JSON.parse(item);
+  } catch (error) {
+    // The item is not valid JSON, thus return an error result
+    return {
+      success: false,
+      error
+    };
+  }
+
+  // Everything's fine, thus return a success result
+  return {
+    success: true,
+    value
+  };
+}
+```
+
+返回的 `Result` 是一个标签联合类型 (tagged union type)[https://mariusschulz.com/blog/typescript-2-0-tagged-union-types]。就是其他语言中的 `Maybe`, `Option`, `Optional`。
+
+```js
+const result = tryDeserializeLocalStorageItem("dark_mode");
+
+if (result.success) {
+  // We've narrowed the `success` property to `true`,
+  // so we can access the `value` property
+  const darkModeEnabled: unknown = result.value;
+
+  if (typeof darkModeEnabled === "boolean") {
+    // We've narrowed the `unknown` type to `boolean`,
+    // so we can safely use `darkModeEnabled` as a boolean
+    console.log("Dark mode enabled: " + darkModeEnabled);
+  }
+} else {
+  // We've narrowed the `success` property to `false`,
+  // so we can access the `error` property
+  console.error(result.error);
+}
+```
+
+`tryDeserializeLocalStorageItem` 在使用 `error` 或 `value` 之前，必须检查 `Result.success`，
+这就是一个非常干净的错误检查模型。
+
+`tryDeserializeLocalStorageItem` 不能简单的返回 `null` 去标明是否解析失败:
+
+1. `null` 是一个合法的 JSON 值，因此我们不能很好的区分值就是 `null` 还是解析失败了
+2. 如果只是返回了 `null` ，我们就不能同时返回错误信息了
