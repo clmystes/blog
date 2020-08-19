@@ -1,0 +1,83 @@
+---
+title: Vue3 中的 UnwrapNestedRefs
+date: 2020-08-19
+---
+
+`UnwrapNestedRefs` 是 `reactive` 函数的返回类型
+
+## Reactive 的函数签名
+
+```ts
+export function reactive<T extends object>(target: T): UnwrapNestedRefs<T>
+```
+
+### UnwrapNestedRefs
+
+```ts
+type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRef<T>
+```
+
+如果 `UnwrapNestedRefs` 没有继承于 `Ref` ，说明 `Ref` 是被嵌套在 `T` 中，需要 `UnwrapRef` 出来
+即 `UnwrapNestedRefs<T>` 可以是 `Ref`，但不可以是 `{ [key]: Ref }`
+
+注意：`Array<Ref>` 初版是不支持的，但目前支持了，具体见这个测试 `should NOT unwrap ref types nested inside arrays` 相关的 `commit`
+
+### Ref
+
+```ts
+declare const RefSymbol: unique symbol
+
+export interface Ref<T = any> {
+  /**
+   * Type differentiator only.
+   * We need this to be in public d.ts but don't want it to show up in IDE
+   * autocomplete, so we use a private Symbol instead.
+   */
+  [RefSymbol]: true
+  value: T
+}
+```
+
+### UnwrapRef
+
+```ts
+// 如果是 Ref 类型需要对 Ref.value 执行 UnwrapRefSimple
+// 否则直接 UnwrapRefSimple
+export type UnwrapRef<T> = T extends Ref<infer V>
+  ? UnwrapRefSimple<V>
+  : UnwrapRefSimple<T>
+
+type UnwrapRefSimple<T> = T extends
+  | Function
+  // type CollectionTypes = IterableCollections | WeakCollections
+  // type IterableCollections = Map<any, any> | Set<any>
+  // type WeakCollections = WeakMap<any, any> | WeakSet<any>
+  | CollectionTypes
+  | BaseTypes // type BaseTypes = string | number | boolean
+  | Ref
+  // 预留给使用方拓展，比如
+  //   declare module '@vue/reactivity' {
+  //   export interface RefUnwrapBailTypes {
+  //     runtimeDOMBailTypes: Node | Window
+  //   }
+  // }
+  | RefUnwrapBailTypes[keyof RefUnwrapBailTypes]
+  ? T // 如果是以上几种类型，就不需要继续 unwrap
+  : T extends Array<any>
+    ? { [K in keyof T]: UnwrapRefSimple<T[K]> } // 如果是数组需要对每一项递归 UnwrapRefSimple
+    : T extends object ? UnwrappedObject<T> : T // 如果是对象，调用 UnwrappedObject ，也会对对象的每一个 value 重新调用 UnwrapRef
+
+// SymbolExtract<T>: 由于 keyof 遍历无法获取 symbols 属性，因此要手动把所有存在的 symbol 加回去
+type UnwrappedObject<T> = { [P in keyof T]: UnwrapRef<T[P]> } & SymbolExtract<T>
+```
+
+#### infer
+
+```ts
+type ReturnType<T> = T extends (...args: any[]) => infer R ? R : any;
+type T0 = ReturnType<() => string>; // string
+// 相当于
+type ReturnType<T, R> = T extends (...args: any[]) => R ? R : any;
+type T0 = ReturnType<() => string, string>; // string
+// 使用 infer 可以推断出 R 的类型，就省去了一个泛型声明
+```
