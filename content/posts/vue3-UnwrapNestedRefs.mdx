@@ -1,14 +1,14 @@
 ---
 title: Vue3 中的 UnwrapNestedRefs
-date: 2020-08-19
+date: 2020-08-21
 ---
 
 `UnwrapNestedRefs` 是 `reactive` 函数的返回类型
 
-## Reactive 的函数签名
+### Reactive 的函数签名
 
 ```ts
-export function reactive<T extends object>(target: T): UnwrapNestedRefs<T>
+function reactive<T extends object>(target: T): UnwrapNestedRefs<T>
 ```
 
 ### UnwrapNestedRefs
@@ -17,32 +17,22 @@ export function reactive<T extends object>(target: T): UnwrapNestedRefs<T>
 type UnwrapNestedRefs<T> = T extends Ref ? T : UnwrapRef<T>
 ```
 
-如果 `UnwrapNestedRefs` 没有继承于 `Ref` ，说明 `Ref` 是被嵌套在 `T` 中，需要 `UnwrapRef` 出来
-即 `UnwrapNestedRefs<T>` 可以是 `Ref`，但不可以是 `{ [key]: Ref }`
-
-注意：`Array<Ref>` 初版是不支持的，但目前支持了，具体见这个测试 `should NOT unwrap ref types nested inside arrays` 相关的 `commit`
-
-### Ref
+如果 `T` 是 `Ref` ，就直接返回 `T`, 否则要 `unwrap` 后返回，举几个例子:
 
 ```ts
-declare const RefSymbol: unique symbol
-
-export interface Ref<T = any> {
-  /**
-   * Type differentiator only.
-   * We need this to be in public d.ts but don't want it to show up in IDE
-   * autocomplete, so we use a private Symbol instead.
-   */
-  [RefSymbol]: true
-  value: T
-}
+reactive(ref(1)) => Ref<number> // 直接返回 Ref
+reactive({a: ref(1)}) => {a: number} // unwrap ref(1) 后返回
+reactive([ref(1), 1, "1", {a: ref(1)}]) => Ref<number> | number | string | {a: number} // 数组中的对象要 unwrap 后返回
 ```
+
+即如果 `T` 中含有嵌套的 `Ref` 类型，需要把 `Ref.value` 的类型解套出来，方便使用。
+举个例子，比如我们要定义一个响应式对象 `const data = reactive({a: ref(1)})` 使用的时候，
+我们肯定是希望 `data.a`， 而不是 `data.a.value`
 
 ### UnwrapRef
 
 ```ts
-// 如果是 Ref 类型需要对 Ref.value 执行 UnwrapRefSimple
-// 否则直接 UnwrapRefSimple
+// 如果当前解套的值是 Ref ，就可以通过 infer 拿到 value 的类型
 export type UnwrapRef<T> = T extends Ref<infer V>
   ? UnwrapRefSimple<V>
   : UnwrapRefSimple<T>
@@ -64,8 +54,8 @@ type UnwrapRefSimple<T> = T extends
   | RefUnwrapBailTypes[keyof RefUnwrapBailTypes]
   ? T // 如果是以上几种类型，就不需要继续 unwrap
   : T extends Array<any>
-    ? { [K in keyof T]: UnwrapRefSimple<T[K]> } // 如果是数组需要对每一项递归 UnwrapRefSimple
-    : T extends object ? UnwrappedObject<T> : T // 如果是对象，调用 UnwrappedObject ，也会对对象的每一个 value 重新调用 UnwrapRef
+    ? { [K in keyof T]: UnwrapRefSimple<T[K]> } // 如果是数组需要对每一项递归检查是否需要 unwrap
+    : T extends object ? UnwrappedObject<T> : T // 如果是对象，调用 UnwrappedObject ，对每一个值进行 unwrap
 
 // SymbolExtract<T>: 由于 keyof 遍历无法获取 symbols 属性，因此要手动把所有存在的 symbol 加回去
 type UnwrappedObject<T> = { [P in keyof T]: UnwrapRef<T[P]> } & SymbolExtract<T>
