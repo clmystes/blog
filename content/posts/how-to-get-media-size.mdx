@@ -1,0 +1,53 @@
+---
+title: 如何获得媒体元素的真实大小
+date: 2020-08-30
+---
+
+常见的媒体元素有 `img`, `video`, `canvas` 三种，对应获取方式是：
+
+1. `img`: img.naturalWidth, img.naturalHeight
+2. `video`: video.videoWidth, video.videoHeight
+3. `canvas`: canvas.width, cansvas.height
+
+因为媒体资源加载好之后才可以获得其真实大小，需要注意在对应 `loaded` 事件触发后或是轮询
+方式进行操作最终代码如下:
+
+```js
+function getMediaSize(media) {
+  if (!media) {
+    return Promise.reject({
+      width: 0,
+      height: 0,
+    })
+  }
+
+  return new Promise((resolve, reject) => {
+    const size = get()
+    if (size.width) {
+      return resolve(size)
+    }
+    if (media.tagName === "VIDEO") {
+      return media.addEventListener("loadedmetadata", () => resolve(get()))
+    }
+    setTimeout(function check() {
+      const size = get()
+      if (size.width) {
+        resolve(size)
+      } else {
+        setTimeout(check, 100)
+      }
+    }, 100)
+  })
+
+  function get() {
+    return {
+      width: media.getContext
+        ? media.width
+        : media.naturalWidth || media.videoWidth || 0,
+      height: media.getContext
+        ? media.height
+        : media.naturalHeight || media.videoHeight || 0,
+    }
+  }
+}
+```
