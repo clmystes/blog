@@ -1,0 +1,9 @@
+del {
+  background-color: rgb(255, 230, 230);
+  color: #000;
+}
+
+ins {
+  background-color: rgb(230, 255, 230);
+  color: #000;
+}

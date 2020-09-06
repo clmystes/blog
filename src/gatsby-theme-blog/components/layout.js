@@ -1,5 +1,6 @@
 import React, { useEffect } from "react"
 import Layout from "gatsby-theme-blog/src/components/layout"
+import "./layout.css"
 
 export default ({ children, ...props }) => {
   useEffect(() => {

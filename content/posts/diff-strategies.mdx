@@ -1,0 +1,113 @@
+---
+title: Diff 策略(1)
+date: 2020-09-06
+---
+
+<p>Text 1: Apples are a fruit.</p>
+<p>Text 2: Bananas are also fruit.</p>
+<p>Diff:   <del>Apple</del><ins>Banana</ins>s are a<ins>lso</ins> fruit.</p>
+
+在编程中，比较内容之间的差异性，是十分常见的需求，比如 `git diff`, `vue` `react` 中的 `虚拟 dom diff` 等。
+本文会介绍一些常用的 Diff 策略。
+
+## 1. 预处理优化
+
+### 1.1 相等性比较
+
+显而易见的，只有不相等的内容才需要比较。
+
+```js
+if (text1 === text2) return null
+```
+
+### 1.2 公共前缀/后缀
+
+假设我们有以下字符串需要进行比较
+
+Text 1: The cat in the hat.
+
+Text 2: The dog in the hat.
+
+很显然可以去除公共的前缀后缀，以简化算法，等价于比较
+
+Text 1: cat
+
+Text 2: dog
+
+### 1.3 插入与删除的特殊情况
+
+先看插入的例子
+
+Text 1: The cat in the hat.
+
+Text 2: The furry cat in the hat.
+
+去除首尾公共字符后
+
+Text 1:
+
+Text 2: furry
+
+可以直接得出结果 Text 2 插入了 furry
+
+再看删除的例子
+
+Text 1: The cat in the hat.
+
+Text 2: The cat.
+
+去除首尾公共字符后
+
+Text 1: in the hat
+
+Text 2:
+
+可以直接得出结果 Text 2 删除了  in the hat
+
+由于这两种情况可以非常简单的判断到，就避免昂贵的 Diff 算法的执行。
+
+### 1.4 最长公共子串
+
+待比较的内容如下：
+
+Text 1: The cat in the hat.
+
+Text 2: The ox in the box.
+
+首先去除公共前后缀可得
+
+Text 1: cat in the hat
+
+Text 2: ox in the box
+
+由观察法可知，in the 是不需要进行 diff 比较的，可以节省掉计算成本，而 in the 正是 Text 1 和 Text 2 的最长公共子串，因此我们可以把最长公共子串去掉后，分别对 cat 和 ox ，hat 和 box 进行比较
+
+## 2. Diff
+
+常见三种 diff 模式：
+
+Text 1: The cat in the hat.
+
+Text 2: The bird in the hand.
+
+Char diff: The <del>cat</del><ins>bird</ins> in the ha<del>t</del><ins>nd</ins>.
+
+Word diff: The <del>cat</del><ins>bird</ins> in the <del>hat</del><ins>hand</ins>.
+
+Line diff: <del>The cat in the hat.</del><ins>The bird in the hand.</ins>
+
+1. 字符级比较：这种模式得到的结果，是最详细的，但由于大量的字符比较也是最耗费时间的
+2. 词级和行级比较：运行速度较快，结果信息没有字符级的全面
+
+选取哪一种模式主要看实际应用，比如，比较源代码那么行级的模式就足够了，文章内容的比较就一般选用词级比较多。
+
+### 2.1 Diff 输出
+
+Text 1: The black cat in the hat
+
+Text 2: The cat in the black hat
+
+1. 编辑模式: 先删除 black，再在指定位置插入
+
+  The <del>black </del>cat in the <ins>black </ins>hat
+2. 移动模式: 将 black 向后移动到指定位置 ![wmgw2n.png](https://s1.ax1x.com/2020/09/06/wmgw2n.png)
