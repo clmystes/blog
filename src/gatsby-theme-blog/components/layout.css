@@ -7,3 +7,13 @@ ins {
   background-color: rgb(230, 255, 230);
   color: #000;
 }
+
+img {
+  max-width: 480px;
+}
+
+@media (max-width: 480px) {
+  img {
+    max-width: 260px;
+  }
+}

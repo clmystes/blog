@@ -1,0 +1,80 @@
+---
+title: Diff 策略(2)
+date: 2020-09-10
+---
+
+接上文
+
+### 2.2 速度 与 准确性
+
+有时候为了 diff 的速度，会牺牲一些信息的准确性，比如：
+
+Text 1: a bbb c
+
+Text 2: d bbb e
+
+为了准确性: <del>a</del><ins>d</ins> bbb <del>c</del><ins>e</ins>
+
+为了速度: <del>a bbb c</del><ins>d bbb e</ins>
+
+另一种提升速度的方案是：先采用行级的 diff，然后针对发生改动的行再使用词级或字符级的 diff。
+但这种方案也有缺陷，可能会导致结果是正确的，但是语义却不清晰。假设你要将代码中 a 函数修改为 b 函数。
+
+```js
+function a() {
+  // some code
+
+  // some code
+}
+
+function b() {
+  // some other code
+
+  // some other code
+}
+```
+
+如果是语义化的 diff 结果应该是 a -> b ，但是由于 a b 都含有一个空行，会导致语义上的误判 a b 具有相同性。
+
+## 3. 结果处理
+
+一个理想 diff 算法得到的结果，应该是 Text1 转换到 Text2 所需要的最少编辑次数。
+但有时最理想的算法，却不一定时最适合的。
+
+Text 1: hello world!
+
+Text 2: In no worse
+
+Diff: <del>hell</del><ins>In n</ins>o wor<del>ld!</del><ins>se</ins>
+
+肉眼观察 Text1 Text2 是完完全全不同的两句话，最和语义的 diff 结果应该是 删除 Text1 插入 Text2 即可。
+如果使结果既获得最佳操作数又能符合语义就是 diff 策略最后一步需要做的事。
+
+### 3.1 语义化
+
+Text1: Quicq fyre
+
+Text2: Quicj fire
+
+Diff1: quic<del>q</del><ins>k</ins> f<del>y</del><ins>i</ins>re
+
+Diff2: quic<del>q</del><ins>k</ins><del> f</del><ins> f</ins><del>y</del><ins>i</ins>re
+
+Diff 可能会有多种输出结果，但显然 Diff1 的结果是更符合语义化的，
+
+再看下面的例子
+
+Text1: That cartoon
+
+Text2: That cat cartoon
+
+Diff1: Th<ins>at c</ins>at cartoon
+
+Diff2: Tha<ins>t ca</ins>t cartoon
+
+Diff3: That<ins> cat</ins> cartoon
+
+Diff4: That <ins>cat </ins>cartoon
+
+4种结果都是正确的，但如何能得到第3或第4中这种更可读的结果呢？我们可以采用一种对边界元素进行判断的方法：
+如果如果删除或插入的块的开头或结尾是 空格，换行符，非字母或类似分隔符，那么就优先选用这种结果。
