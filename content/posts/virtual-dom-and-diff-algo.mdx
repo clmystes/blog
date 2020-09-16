@@ -1,0 +1,126 @@
+---
+title: 虚拟 DOM 与 Diff 算法
+date: 2020-09-16
+---
+
+## 什么是 DOM
+
+DOM 全称是 `Document Object Model`。在前端中，`document` 指的就是网页。
+因此 DOM（文档对象模型）指的就是网页的一种面向对象的表达，document 对象由浏览器提供，我们可以通过
+document 创建，删除，修改文档内容。
+
+```js
+const h1 = document.createElement("h1")
+
+h1.textContent = "foo"
+
+document.body.appendChild(h1)
+
+document.body.removeChild(h1)
+```
+
+## 什么是虚拟 DOM
+
+顾名思义，虚拟 DOM 是由程序创建的一种私有 DOM 表达，不能直接插入或修改真正的网页。
+
+```js
+createVNode({
+  type: "p",
+  attrs: {
+    className: "foo",
+  },
+  children: "bar",
+})
+```
+
+## 为什么需要虚拟 DOM
+
+为了更好理解虚拟 DOM 出现的原因，先介绍下前端开发模型的变化。
+
+### 从 命令式 到 声明式
+
+假设我们要实现一个极简版 toggle 按钮，每次点击会改变自身的颜色。
+
+1. 命令式（JQuery 时代）
+
+```js
+const container = document.getElementById("container")
+const btn = document.createElement("button")
+
+btn.className = "red"
+btn.onclick = function(event) {
+ if (this.classList.contains("red")) {
+   this.classList.remove("red")
+   this.classList.add("blue")
+ } else {
+   this.classList.remove("blue")
+   this.classList.add("red")
+ }
+}
+container.appendChild(btn)
+```
+
+2. 声明式（React 为例）
+
+```js
+const Toggle = () => {
+  const [color, setColor] = useState("red")
+  return (
+    <button
+      className={ color }
+      onClick={ _ => setColor(color === "red" ? "blue" : "red") }>
+    </button>
+  )
+}
+```
+
+对比下来非常明显，命令式的模型，有大量的代码在操作繁琐的 DOM，很容易写成让人诟病的面条式代码，业务逻辑混在 DOM操作中，难以维护。
+而声明式的代码，是一个非常清楚的 data -> UI 的映射模型，编写的精力只需要放在数据状态的维护上。
+
+### 虚拟 DOM 的优势
+
+1. 性能
+
+这里的性能，指的是 data -> UI 这个模型体系下的性能，因为增加了一层抽象，任何虚拟 DOM 算法的性能一定比不上手动操作真实 DOM，但这种
+模型带来编程范式上的提升，远远大于其性能损耗。
+
+data -> UI 这个模型下，如果 data 直接映射到真实 DOM，每次数据更新都引发界面重新渲染，显然很容易就会产生性能瓶颈。编程中，一般问题都可以通过增加抽象层解决，
+虚拟 DOM 就很好的解决了这个问题。首先数据的更新会体现在虚拟 DOM 上，但虚拟 DOM 不会立即通知浏览器更新真实 DOM（这由不同库的更新调度系统决定，React 的相对比较
+复杂，比如用户正在输入等交互时间不应该更新，Vue 会把更新任务放在微任务队列中），在 batching 了许多更新请求后，虚拟 DOM 开始真正的更新任务：和更新前虚拟 DOM 进行
+diff 找出真正需要更新的位置，进行更新。
+
+2. 跨平台
+
+虚拟 DOM 的加入，使得整个流程变成了 Data -> VNode -> platform dom，这就为跨平台的抽象提供了可能。并且由于数据层，调度算法，Diff 算法这些都可以复用，只需要实现
+虚拟 DOM 到平台 “dom” 的映射，真的有望达成 `Learn Once, Write Anywhere`。
+
+一些实现:
+
+- React(facebook): web 实现
+- React Native(facebook): Android iOS 实现
+- React 360(facebook): VR 实现
+- react-native-windows/react-native-macos(microsoft): windows macos 实现
+- Taro(jd): 小程序实现
+
+## Diff 算法
+
+### reconciliation 算法（React）
+
+![w6nIit.png](https://s1.ax1x.com/2020/09/15/w6nIit.png)
+
+### 双端比较算法（Vue2）
+
+1. a 移到 c 后面
+2. b 移到 a 后面
+
+观察法，更好的方案: c 移到 a 前面
+
+[![w6uo79.png](https://s1.ax1x.com/2020/09/15/w6uo79.png)](https://imgchr.com/i/w6uo79)
+
+### inferno 算法（Vue3）
+
+![wgtiIf.png](https://s1.ax1x.com/2020/09/16/wgtiIf.png)
+
+最长上升子序列索引 [0, 1, 4]
+
+这样我们可以得出，总共 6 个元素中，有三个元素的位置是不用变更的，因此只要移动另外三个就可以完成更新。
