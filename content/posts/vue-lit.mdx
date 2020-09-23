@@ -1,0 +1,145 @@
+---
+title: "vue-lit: 响应式 Web Components 框架的实现"
+date: 2020-09-26
+---
+
+Vue 3 中将整个[响应式系统](https://github.com/vuejs/vue-next/tree/master/packages/reactivity)独立了出来，
+这意味你可以发挥你的想象力将响应式模型适配到任意适合的领域。
+
+`vue lit` 就是一个例子，仅仅利用约 70 行代码，就实现了一个拥有响应式数据，生命周期，props 等功能的 web components 框架。
+
+## 函数签名设计
+
+首先定义 component 必须要提供的参数有 name, props, 然后需要提供一个 setup 函数用于定义组件逻辑以及响应式数据，最后是一个渲染函数，
+每次调用返回最新的 html 结构，渲染函数可以作为 setup 的返回值提供。
+
+```js
+defineComponent("comp1", () => {
+  const state = reactive({ count: 0 })
+  return () => html`<p>${state.count}<p>`
+})
+
+// with props
+defineComponent("comp2", ["msg"], (props) => {
+  return () => html`<p>${props.msg}<p>`
+})
+```
+
+## defineComponent 的实现
+
+1. props 是可选的，如果传入的 propDefs 的类型是函数表示第二个参数就是 setup 函数，没有使用 props。
+2. 使用 web api `customElements.define` 创建 web component。
+
+```js
+function defineComponent(name, propDefs, factory) {
+  if(typeof propDefs === 'function') {
+    factory = propDefs
+    propDefs = []
+  }
+
+  customElements.define(
+    name,
+    class extends HTMLElement {
+      // ...
+    },
+  )
+}
+```
+
+## Component 的创建
+
+1. 获取 props
+2. 执行 setup 并获取 render function
+3. 获取 component 的 container
+4. 设置变量 isMounted 区分创建与更新流程
+5. 定义 effect 函数，这样当 render 执行时，可以自动收集依赖，之后数据变更时也会重新触发 render
+
+```js
+import { shallowReactive, effect } from "@vue/reactivity"
+import { render } from 'lit-html"
+
+class extends HTMLElement {
+  constructor() {
+    super()
+    const props = (this._props = shallowReactive({}))
+    const template = factory.call(this, props)
+    const root = this.attachShadow({ mode: 'closed' })
+    let isMounted = false
+    effect(() => {
+      render(template(), root)
+      isMounted = true
+    })
+  }
+}
+```
+
+## 生命周期的实现
+
+生命周期就是在 setup 过程中，注册回调函数，在 component 的不同阶段调用。
+
+1. 声明变量 `currentInstance` 表示当前执行 setup 的 component, `createLifecycleMethod` 生命周期注册函数
+
+```js
+let currentInstance
+
+function createLifecycleMethod(name) {
+  return (cb) => {
+    if (currentInstance) {
+      ;(currentInstance[name] || (currentInstance[name] = [])).push(cb)
+    }
+  }
+}
+
+const onBeforeMount = createLifecycleMethod('_bm')
+const onMounted = createLifecycleMethod('_m')
+const onBeforeUpdate = createLifecycleMethod('_bu')
+const onUpdated = createLifecycleMethod('_u')
+const onUnmounted = createLifecycleMethod('_um')
+
+class extends HTMLElement {
+  constructor() {
+    currentInstance = this
+    // render 之前，执行 beforeMount
+    this._bm && this._bm.forEach((cb) => cb())
+    effect(() => {
+      if (isMounted) {
+        // 已挂载，数据变更执行更新前，执行 beforeUpdate
+        this._bu && this._bu.forEach((cb) => cb())
+      }
+      render(template(), root)
+      if (isMounted) {
+        // 已挂载，render 结束，执行 updated
+        this._u && this._u.forEach((cb) => cb())
+      } else {
+        isMounted = true
+      }
+    })
+  }
+  // web component 挂载完毕钩子，执行 mounted
+  connectedCallback() {
+    this._m && this._m.forEach((cb) => cb())
+  }
+  // web component 卸载完毕钩子，执行 unmounted
+  disconnectedCallback() {
+    this._um && this._um.forEach((cb) => cb())
+  }
+}
+```
+
+## props 的实现
+
+使用 web component 提供的 attribute 更新钩子。
+
+```js
+class extends HTMLElement {
+  attributeChangedCallback(name, oldValue, newValue) {
+    this._props[name] = newValue
+  }
+}
+```
+
+## 链接
+
+- [vue-lit](https://github.com/yyx990803/vue-lit)
+- [vue-next](https://github.com/vuejs/vue-next)
+- [lit-html](https://lit-html.polymer-project.org/)
