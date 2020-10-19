@@ -1,0 +1,77 @@
+---
+title: Vue 初始化流程（1）
+date: 2020-10-18
+---
+
+一个 Vue 应用的创建代码如下:
+
+```html
+<div id="counter">Counter: {{ counter }}</div>
+```
+
+```js
+const Counter = {
+  data() {
+    return {
+      counter: 0,
+    }
+  },
+}
+
+const app = Vue.createApp(Counter)
+app.mount('#counter')
+```
+
+下面通过阅读 `cerateApp` 以及 `mount` 的代码，让我们了解下 Vue 的初始化流程。
+
+`createApp` 定义在 `vue-next/packages/runtime-dom/src/index.ts` 中，代码如下:
+
+```ts
+export const createApp = ((...args) => {
+  const app = ensureRenderer().createApp(...args)
+
+  if (__DEV__) {
+    injectNativeTagCheck(app)
+  }
+
+  const { mount } = app
+  app.mount = (containerOrSelector: Element | string): any => {
+    const container = normalizeContainer(containerOrSelector)
+    if (!container) return
+    const component = app._component
+    if (!isFunction(component) && !component.render && !component.template) {
+      component.template = container.innerHTML
+    }
+    // clear content before mounting
+    container.innerHTML = ''
+    const proxy = mount(container)
+    container.removeAttribute('v-cloak')
+    container.setAttribute('data-v-app', '')
+    return proxy
+  }
+
+  return app
+}) as CreateAppFunction<Element>
+```
+
+1. 首先通过 `ensureRenderer().createApp(...args)` 创建了 `app` , 即当前 vue 应用。
+2. 重写 `app` 的 `mount` 方法，获取 `DOM` 的挂载点，清理 `DOM` 并执行真正的 `mount` 操作。
+
+到这里你可能会有几个疑问:
+1. 为什么要通过 `ensureRenderer().createApp(...args)` 创建应用？
+
+```ts
+function ensureRenderer() {
+  return renderer || (renderer = createRenderer<Node, Element>(rendererOptions))
+}
+```
+
+两个原因:
+- `renderer` 会被延后创建，这样当你仅仅只使用 `vue` 的 `reactive` 系统时，`renderer` 代码不会被执行，即可以被 `tree-shaking` 掉，以减少包体积。
+- `vue` 设计之初就考虑到了跨平台的使用，这里通过 `rendererOptions` 传入平台 specific 的操作方法，来创建不同平台的渲染器。
+
+2. 为什么要重写 `app` 的 `mount` 方法？
+
+同样也是为了跨平台代码复用。重写的 `mount` 中，处理了 Web 平台中的特定情况，而真正的 `mount` 是由上文中 `createRenderer` 创建的平台无关的方法。
+
+下篇文章会继续了解平台无关的 `createApp` 与挂载方法 `mount` 是如何实现的。
