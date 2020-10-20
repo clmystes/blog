@@ -1,0 +1,133 @@
+---
+title: Vue 初始化流程（2）
+date: 2020-10-18
+---
+
+```ts
+const app = ensureRenderer().createApp(...args)
+
+let renderer: Renderer<Element> | HydrationRenderer
+
+function ensureRenderer() {
+  return renderer || (renderer = createRenderer<Node, Element>(rendererOptions))
+}
+```
+
+上次我们阅读到， `app` 实际是由 `createRenderer` 先创建 `renderer`，再由 `renderer` 提供的 `createApp` 方法生成的。
+
+`createRenderer` 定义在 `vue-next/packages/runtime-core/src/renderer.ts`，代码如下：
+
+```ts
+export function createRenderer<
+  HostNode = RendererNode,
+  HostElement = RendererElement
+>(options: RendererOptions<HostNode, HostElement>) {
+  return baseCreateRenderer<HostNode, HostElement>(options)
+}
+```
+
+`baseCreateRenderer` 的存在是为了与 SSR 的渲染器复用逻辑，下面看具体的创建逻辑：
+
+```ts
+  const {
+    insert: hostInsert,
+    remove: hostRemove,
+    // ...
+  } = options
+```
+
+首先从 options 中获取视图操作的 primitive operation，web 平台的实现可以在 `vue-next/packages/runtime-dom/src/nodeOps.ts` 中查看。
+接下来就是一列的具体的视图操作逻辑，最终返回 `renderer` 对象：
+
+```ts
+const unmountComponent = () => {}
+const remove: RemoveFn = vnode => {}
+const unmount: UnmountFn = () => {}
+const render: RootRenderFunction = (vnode, container) => {}
+// ...
+return {
+  render,
+  hydrate,
+  createApp: createAppAPI(render, hydrate)
+}
+```
+
+`createApp` 函数最终由 `createAppAPI` 生成，同时利用闭包将渲染相关方法保存到此函数中。
+下面看 `createAppAPI` 的具体实现，定义在 `vue-next/packages/runtime-core/src/apiCreateApp.ts` 中，
+从函数定义中可以知道，`createApp` 接收第二个参数作为根组件的 `props`。
+
+```ts
+export function createAppAPI<HostElement>(
+  render: RootRenderFunction,
+  hydrate?: RootHydrateFunction
+): CreateAppFunction<HostElement> {
+  return function createApp(rootComponent, rootProps = null) {
+    // ...
+  }
+}
+```
+
+继续看 `createApp` 的执行过程，首先对根组件的 `props` 进行了入参检查：
+
+```ts
+if (rootProps != null && !isObject(rootProps)) {
+  __DEV__ && warn(`root props passed to app.mount() must be an object.`)
+  rootProps = null
+}
+```
+
+然后创建了 `context`: 保存应用的配置及状态，`installedPlugins` : 插件容器，`isMounted`: 应用挂载状态。
+
+```ts
+const context = createAppContext()
+const installedPlugins = new Set()
+let isMounted = false
+```
+
+简单了解下 `context` 的结构：
+
+```ts
+export function createAppContext(): AppContext {
+  return {
+    app: null as any,
+    config: {
+      isNativeTag: NO,
+      performance: false,
+      globalProperties: {},
+      optionMergeStrategies: {},
+      isCustomElement: NO,
+      errorHandler: undefined,
+      warnHandler: undefined
+    },
+    mixins: [],
+    components: {},
+    directives: {},
+    provides: Object.create(null)
+  }
+}
+```
+
+最后是 `app` 的创建，我们日常使用的一些功能：注册插件，注册组件等功能函数都是在这里实现的。
+
+```ts
+const app: App = (context.app = {
+  _uid: uid++,
+  _component: rootComponent as ConcreteComponent,
+  _props: rootProps,
+  _container: null,
+  _context: context,
+  version,
+  config() {},
+  use(plugin: Plugin, ...options: any[]) {},
+  mixin(mixin: ComponentOptions) {},
+  component(name: string, component?: Component): any {},
+  directive(name: string, directive?: Directive) {},
+  unmount() {},
+  provide(key, value) {},
+  mount(rootContainer: HostElement, isHydrate?: boolean): any {},
+})
+return app
+```
+
+到这里 `app` 的创建流程就结束了，除了跨平台以及 SSR 增加了一些额外逻辑，整个流程是十分直观的。
+下次我们会继续阅读 `app.mount` 函数，挂载流程从这里开始。
