@@ -1,0 +1,254 @@
+---
+title: Vue 初始化流程（3）
+date: 2020-10-30
+---
+
+本文继续了解 `app` 的 `mount` 流程。把之前 `createAppAPI` 的 `mount` 函数中 SSR 以及开发模式相关代码剔除后，
+`mount` 的代码如下：
+
+```ts
+mount(rootContainer: HostElement, isHydrate?: boolean): any {
+  if (!isMounted) {
+    const vnode = createVNode(
+      rootComponent as ConcreteComponent,
+      rootProps
+    )
+    // store app context on the root VNode.
+    // this will be set on the root instance on initial mount.
+    vnode.appContext = context
+    render(vnode, rootContainer)
+    isMounted = true
+    app._container = rootContainer
+    return vnode.component!.proxy
+  } else if (__DEV__) {
+    warn(
+      `App has already been mounted.\n` +
+        `If you want to remount the same app, move your app creation logic ` +
+        `into a factory function and create fresh app instances for each ` +
+        `mount - e.g. \`const createMyApp = () => createApp(App)\``
+    )
+  }
+}
+```
+可以看到 `mount` 函数的主要逻辑是：
+1. 检查了 `isMounted` 状态：一个 `App` 只能挂载一次
+2. 用根组件创建了 `VNode`
+3. 渲染 `VNode` 到挂载点：`render(vnode, rootContainer)`
+4. `isMounted` 置为 `true`
+
+## createVNode
+
+我们先看创建 `VNode` 的过程，代码在 `vue-next/packages/runtime-core/src/vnode.ts`。
+
+```ts
+export const createVNode = (__DEV__
+  ? createVNodeWithArgsTransform
+  : _createVNode) as typeof _createVNode
+```
+
+可以看到，开发环境下调用的是 `createVNodeWithArgsTransform` ，通过注释可以了解这是为了拿到当前渲染实例，方便测试使用。
+
+```ts
+/**
+ * Internal API for registering an arguments transform for createVNode
+ * used for creating stubs in the test-utils
+ * It is *internal* but needs to be exposed for test-utils to pick up proper
+ * typings
+ */
+export function transformVNodeArgs(transformer?: typeof vnodeArgsTransformer) {
+  vnodeArgsTransformer = transformer
+}
+
+const createVNodeWithArgsTransform = (
+  ...args: Parameters<typeof _createVNode>
+): VNode => {
+  return _createVNode(
+    ...(vnodeArgsTransformer
+      ? vnodeArgsTransformer(args, currentRenderingInstance)
+      : args)
+  )
+}
+```
+
+接下来看 `_createVNode`，回忆我们最开始的例子
+
+```ts
+const Counter = {
+  data() {
+    return {
+      counter: 0,
+    }
+  },
+}
+const app = Vue.createApp(Counter)
+```
+
+因此这里等于调用 `_createVNode(Counter, null)` 创建根 VNode，接下来我们
+会了解一个 `VNode` 的创建过程。
+
+```ts
+function _createVNode(
+  type: VNodeTypes | ClassComponent | typeof NULL_DYNAMIC_COMPONENT,
+  props: (Data & VNodeProps) | null = null,
+  children: unknown = null,
+  patchFlag: number = 0,
+  dynamicProps: string[] | null = null,
+  isBlockNode = false
+): VNode { }
+```
+
+1. 参数检查。当 `type` 是一个 `falsy` 的值时，会提示 vnode 类型错误，并创建一个
+   `Comment` 类型的 `VNode`。`NULL_DYNAMIC_COMPONENT` 标志是为了支持动态组件值可能为 `falsy` 。比如 `<component :is="null"/>`，这种十分常见的使用场景。
+
+```ts
+if (!type || type === NULL_DYNAMIC_COMPONENT) {
+  if (__DEV__ && !type) {
+    warn(`Invalid vnode type when creating vnode: ${type}.`)
+  }
+  type = Comment
+}
+```
+
+2. 然后是对 `type` 分别为 `VNode`, `ClassComponent` 时以及 `props` 的处理，由于我们首次传入的是 `Counter` 配置对象，暂时跳过这部分逻辑。
+
+```ts
+if (isVNode(type)) {
+  // createVNode receiving an existing vnode. This happens in cases like
+  // <component :is="vnode"/>
+  // #2078 make sure to merge refs during the clone instead of overwriting it
+  const cloned = cloneVNode(type, props, true /* mergeRef: true */)
+  if (children) {
+    normalizeChildren(cloned, children)
+  }
+  return cloned
+}
+
+// class component normalization.
+if (isClassComponent(type)) {
+  type = type.__vccOpts
+}
+
+// class & style normalization.
+if (props) {
+  // for reactive or proxy objects, we need to clone it to enable mutation.
+  if (isProxy(props) || InternalObjectKey in props) {
+    props = extend({}, props)
+  }
+  let { class: klass, style } = props
+  if (klass && !isString(klass)) {
+    props.class = normalizeClass(klass)
+  }
+  if (isObject(style)) {
+    // reactive state objects need to be cloned since they are likely to be
+    // mutated
+    if (isProxy(style) && !isArray(style)) {
+      style = extend({}, style)
+    }
+    props.style = normalizeStyle(style)
+  }
+}
+```
+
+3. 接下来是 `vnode` 类型的判断，因为我们传入的是 `Counter`, 这里的 `shapeFlag` 就是 `STATEFUL_COMPONENT`。
+
+```ts
+// encode the vnode type information into a bitmap
+const shapeFlag = isString(type)
+  ? ShapeFlags.ELEMENT
+  : __FEATURE_SUSPENSE__ && isSuspense(type)
+    ? ShapeFlags.SUSPENSE
+    : isTeleport(type)
+      ? ShapeFlags.TELEPORT
+      : isObject(type)
+        ? ShapeFlags.STATEFUL_COMPONENT
+        : isFunction(type)
+          ? ShapeFlags.FUNCTIONAL_COMPONENT
+          : 0
+```
+
+4. 然后做了一个比较特别的检查：不允许组件对象是响应式的。原因可以看这个 issue: https://github.com/vuejs/vue-next/issues/962。简单来说，`Vue` 内部会对组件对象使用 `Object.defineProperty` 定义一些不可被 `configurable` 的属性，比如 `_n`，而不可被 `configurable` 的属性是不能被 `Proxy` 所代理的，这也就是 issue 中 `TypeError: 'get' on proxy: property '_n' is a read-only and non-configurable data property on the proxy target but the proxy did not return its actual value (expected '[object Array]' but got '[object Object]')` 报错的来源。
+
+```ts
+if (__DEV__ && shapeFlag & ShapeFlags.STATEFUL_COMPONENT && isProxy(type)) {
+ type = toRaw(type)
+ warn(
+   `Vue received a Component which was made a reactive object. This can ` +
+     `lead to unnecessary performance overhead, and should be avoided by ` +
+     `marking the component with \`markRaw\` or using \`shallowRef\` ` +
+     `instead of \`ref\`.`,
+   `\nComponent that was made reactive: `,
+   type
+ )
+}
+```
+
+5. 创建 `vnode` 对象。
+
+```ts
+const vnode: VNode = {
+    __v_isVNode: true,
+    [ReactiveFlags.SKIP]: true,
+    type,
+    props,
+    key: props && normalizeKey(props),
+    ref: props && normalizeRef(props),
+    scopeId: currentScopeId,
+    children: null,
+    component: null,
+    suspense: null,
+    ssContent: null,
+    ssFallback: null,
+    dirs: null,
+    transition: null,
+    el: null,
+    anchor: null,
+    target: null,
+    targetAnchor: null,
+    staticCount: 0,
+    shapeFlag,
+    patchFlag,
+    dynamicProps,
+    dynamicChildren: null,
+    appContext: null
+}
+```
+
+6. 最后一部分检查了 `vnode.key`，并处理 `children`，这部分逻辑较多，下一篇继续。
+
+```ts
+  // validate key
+  if (__DEV__ && vnode.key !== vnode.key) {
+    warn(`VNode created with invalid key (NaN). VNode type:`, vnode.type)
+  }
+
+  normalizeChildren(vnode, children)
+
+  // normalize suspense children
+  if (__FEATURE_SUSPENSE__ && shapeFlag & ShapeFlags.SUSPENSE) {
+    const { content, fallback } = normalizeSuspenseChildren(vnode)
+    vnode.ssContent = content
+    vnode.ssFallback = fallback
+  }
+
+  if (
+    shouldTrack > 0 &&
+    // avoid a block node from tracking itself
+    !isBlockNode &&
+    // has current parent block
+    currentBlock &&
+    // presence of a patch flag indicates this node needs patching on updates.
+    // component nodes also should always be patched, because even if the
+    // component doesn't need to update, it needs to persist the instance on to
+    // the next vnode so that it can be properly unmounted later.
+    (patchFlag > 0 || shapeFlag & ShapeFlags.COMPONENT) &&
+    // the EVENTS flag is only for hydration and if it is the only flag, the
+    // vnode should not be considered dynamic due to handler caching.
+    patchFlag !== PatchFlags.HYDRATE_EVENTS
+  ) {
+    currentBlock.push(vnode)
+  }
+
+  return vnode
+```
+
+
