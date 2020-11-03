@@ -1,0 +1,148 @@
+---
+title: Vue 初始化流程（4）
+date: 2020-11-07
+---
+
+上一篇文章中 `createVNode` 的逻辑还剩最后一个部分：
+
+```ts
+  // validate key
+  if (__DEV__ && vnode.key !== vnode.key) {
+    warn(`VNode created with invalid key (NaN). VNode type:`, vnode.type)
+  }
+
+  normalizeChildren(vnode, children)
+
+  // normalize suspense children
+  if (__FEATURE_SUSPENSE__ && shapeFlag & ShapeFlags.SUSPENSE) {
+    const { content, fallback } = normalizeSuspenseChildren(vnode)
+    vnode.ssContent = content
+    vnode.ssFallback = fallback
+  }
+
+  if (
+    shouldTrack > 0 &&
+    // avoid a block node from tracking itself
+    !isBlockNode &&
+    // has current parent block
+    currentBlock &&
+    // presence of a patch flag indicates this node needs patching on updates.
+    // component nodes also should always be patched, because even if the
+    // component doesn't need to update, it needs to persist the instance on to
+    // the next vnode so that it can be properly unmounted later.
+    (patchFlag > 0 || shapeFlag & ShapeFlags.COMPONENT) &&
+    // the EVENTS flag is only for hydration and if it is the only flag, the
+    // vnode should not be considered dynamic due to handler caching.
+    patchFlag !== PatchFlags.HYDRATE_EVENTS
+  ) {
+    currentBlock.push(vnode)
+  }
+
+  return vnode
+```
+
+1. 检查了 `vnode` 的 `key` 不能为 `NaN`。
+
+```ts
+  // validate key
+  if (__DEV__ && vnode.key !== vnode.key) {
+    warn(`VNode created with invalid key (NaN). VNode type:`, vnode.type)
+  }
+```
+
+2. 规整化 `children`，由于首次 `mount` 传入的是 `Counter`，`children` 为空，`normalizeChildren(vnode, children)` 的逻辑可以简化为：
+
+```ts
+export function normalizeChildren(vnode: VNode, children: unknown) {
+  let type = 0
+  const { shapeFlag } = vnode
+  if (children == null) {
+    children = null
+  }
+  vnode.children = children as VNodeNormalizedChildren
+  vnode.shapeFlag |= type
+}
+```
+
+可以看出一个 `vnode` 的 `shapeFlag` 是 `parent` 和 `childern` `shapeFlag` 的并集。
+
+3. `suspense` 的处理，`suspense` 的部分如果有机会会放在一起说。
+
+```ts
+  // normalize suspense children
+  if (__FEATURE_SUSPENSE__ && shapeFlag & ShapeFlags.SUSPENSE) {
+    const { content, fallback } = normalizeSuspenseChildren(vnode)
+    vnode.ssContent = content
+    vnode.ssFallback = fallback
+  }
+```
+
+4. 而最后一段的逻辑，实际是编译阶段才会触发的优化部分，被称为 `Block Tree Optimizations`（再挖个坑：之后可能专门有篇文章说一下编译的过程）。
+
+参考链接：https://learnvue.co/2019/12/what-you-need-to-know-about-vue3-in-2020/#block-tree
+
+```ts
+  if (
+    shouldTrack > 0 &&
+    // avoid a block node from tracking itself
+    !isBlockNode &&
+    // has current parent block
+    currentBlock &&
+    // presence of a patch flag indicates this node needs patching on updates.
+    // component nodes also should always be patched, because even if the
+    // component doesn't need to update, it needs to persist the instance on to
+    // the next vnode so that it can be properly unmounted later.
+    (patchFlag > 0 || shapeFlag & ShapeFlags.COMPONENT) &&
+    // the EVENTS flag is only for hydration and if it is the only flag, the
+    // vnode should not be considered dynamic due to handler caching.
+    patchFlag !== PatchFlags.HYDRATE_EVENTS
+  ) {
+    currentBlock.push(vnode)
+  }
+
+  return vnode
+```
+
+## Recap
+
+根组件的 `VNode` 到这里就创建完成了，主要设置了自己的 `shapeFlag` 为 `STATEFUL_COMPONENT` ，然后生成 `VNode` 对象，具体结构如下：
+
+```js
+{
+  type: {
+    template: "↵    <h1>{{ count }}</h1>↵    <button @click="increase">increase</button>↵  ",
+    setup: () { /*...*/ }
+  }
+  shapeFlag: 4
+  anchor: null
+  appContext: null
+  children: null
+  component: null
+  dirs: null
+  dynamicChildren: null
+  dynamicProps: null
+  el: null
+  key: null
+  patchFlag: 0
+  props: null
+  ref: null
+  scopeId: null
+  ssContent: null
+  ssFallback: null
+  staticCount: 0
+  suspense: null
+  target: null
+  targetAnchor: null
+  transition: null
+  __v_isVNode: true
+  __v_skip: true
+}
+```
+
+回顾到目前为止初始化流程都做了哪些事情：
+
+1. 创建渲染器 `renderer`
+2. 创建 `App` 对象
+3. 创建根组件的 `RootVNode`
+
+下一篇文章我们会阅读初始化流程的最后一部分，将根组件渲染到挂载点上：`render(vnode, rootContainer)`。
