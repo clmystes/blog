@@ -1,0 +1,36 @@
+---
+title: Vue 初始化流程（6）
+date: 2020
+draft: true
+---
+
+`setup` 函数接收两个参数： `setup(props, context)`，所以第一步是创建 `context` 传入函数中。
+
+```ts
+const setupContext = (instance.setupContext =
+  setup.length > 1 ? createSetupContext(instance) : null)
+
+function createSetupContext(instance: ComponentInternalInstance): SetupContext {
+  if (__DEV__) {
+    // We use getters in dev in case libs like test-utils overwrite instance
+    // properties (overwrites should not be done in prod)
+    return Object.freeze({
+      get attrs() {
+        return new Proxy(instance.attrs, attrHandlers)
+      },
+      get slots() {
+        return shallowReadonly(instance.slots)
+      },
+      get emit() {
+        return (event: string, ...args: any[]) => instance.emit(event, ...args)
+      }
+    })
+  } else {
+    return {
+      attrs: instance.attrs,
+      slots: instance.slots,
+      emit: instance.emit
+    }
+  }
+}
+```
