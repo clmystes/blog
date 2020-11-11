@@ -1,6 +1,6 @@
 ---
 title: Vue 初始化流程（6）
-date: 2020
+date: 2020-11-21
 draft: true
 ---
 
@@ -34,3 +34,274 @@ function createSetupContext(instance: ComponentInternalInstance): SetupContext {
   }
 }
 ```
+
+运行 `setup` 函数，获取响应式数据 `setupResult` ，`reactive` 的流程之后独立来说。
+
+```ts
+currentInstance = instance
+pauseTracking()
+const setupResult = callWithErrorHandling(
+  setup,
+  instance,
+  ErrorCodes.SETUP_FUNCTION,
+  [__DEV__ ? shallowReadonly(instance.props) : instance.props, setupContext]
+)
+resetTracking()
+currentInstance = null
+```
+
+对 `suspense` 和 `SSR` 的情况进行检查，我们这里直接进入 `handleSetupResult` 函数。
+
+```ts
+if (isPromise(setupResult)) {
+  if (isSSR) {
+    // return the promise so server-renderer can wait on it
+    return setupResult.then((resolvedResult: unknown) => {
+      handleSetupResult(instance, resolvedResult, isSSR)
+    })
+  } else if (__FEATURE_SUSPENSE__) {
+    // async setup returned Promise.
+    // bail here and wait for re-entry.
+    instance.asyncDep = setupResult
+  } else if (__DEV__) {
+    warn(
+      `setup() returned a Promise, but the version of Vue you are using ` +
+        `does not support it yet.`
+    )
+  }
+} else {
+  handleSetupResult(instance, setupResult, isSSR)
+}
+```
+
+从 `handleSetupResult` 我们可以知道：
+
+1. `setup` 可以返回一个 `render function`，但不能直接返回 `VNode`。
+2. 代理了 `setupResult` 使得访问对象时返回的是 `unref` 后的数据。
+
+```ts
+export function handleSetupResult(
+  instance: ComponentInternalInstance,
+  setupResult: unknown,
+  isSSR: boolean
+) {
+  if (isFunction(setupResult)) {
+    // setup returned an inline render function
+    instance.render = setupResult as InternalRenderFunction
+  } else if (isObject(setupResult)) {
+    if (__DEV__ && isVNode(setupResult)) {
+      warn(
+        `setup() should not return VNodes directly - ` +
+          `return a render function instead.`
+      )
+    }
+    // setup returned bindings.
+    // assuming a render function compiled from template is present.
+    if (__DEV__ || __FEATURE_PROD_DEVTOOLS__) {
+      instance.devtoolsRawSetupState = setupResult
+    }
+    instance.setupState = proxyRefs(setupResult)
+    if (__DEV__) {
+      exposeSetupStateOnRenderContext(instance)
+    }
+  } else if (__DEV__ && setupResult !== undefined) {
+    warn(
+      `setup() should return an object. Received: ${
+        setupResult === null ? 'null' : typeof setupResult
+      }`
+    )
+  }
+  finishComponentSetup(instance, isSSR)
+}
+```
+
+## finishComponentSetup
+
+```ts
+function finishComponentSetup(
+  instance: ComponentInternalInstance,
+  isSSR: boolean
+) {
+  const Component = instance.type as ComponentOptions
+
+  // template / render function normalization
+  if (__NODE_JS__ && isSSR) {
+    if (Component.render) {
+      instance.render = Component.render as InternalRenderFunction
+    }
+  } else if (!instance.render) {
+    // could be set from setup()
+    if (compile && Component.template && !Component.render) {
+      if (__DEV__) {
+        startMeasure(instance, `compile`)
+      }
+      Component.render = compile(Component.template, {
+        isCustomElement: instance.appContext.config.isCustomElement,
+        delimiters: Component.delimiters
+      })
+      if (__DEV__) {
+        endMeasure(instance, `compile`)
+      }
+    }
+
+    instance.render = (Component.render || NOOP) as InternalRenderFunction
+
+    // for runtime-compiled render functions using `with` blocks, the render
+    // proxy used needs a different `has` handler which is more performant and
+    // also only allows a whitelist of globals to fallthrough.
+    if (instance.render._rc) {
+      instance.withProxy = new Proxy(
+        instance.ctx,
+        RuntimeCompiledPublicInstanceProxyHandlers
+      )
+    }
+  }
+
+  // support for 2.x options
+  if (__FEATURE_OPTIONS_API__) {
+    currentInstance = instance
+    applyOptions(instance, Component)
+    currentInstance = null
+  }
+
+  // warn missing template/render
+  if (__DEV__ && !Component.render && instance.render === NOOP) {
+    /* istanbul ignore if */
+    if (!compile && Component.template) {
+      warn(
+        `Component provided template option but ` +
+          `runtime compilation is not supported in this build of Vue.` +
+          (__ESM_BUNDLER__
+            ? ` Configure your bundler to alias "vue" to "vue/dist/vue.esm-bundler.js".`
+            : __ESM_BROWSER__
+              ? ` Use "vue.esm-browser.js" instead.`
+              : __GLOBAL__
+                ? ` Use "vue.global.js" instead.`
+                : ``) /* should not happen */
+      )
+    } else {
+      warn(`Component is missing template or render function.`)
+    }
+  }
+}
+```
+
+第一步是模板编译，组件定义可以使用模板或渲染函数，但在这一步都会被转化成渲染函数。
+
+```ts
+const Component = instance.type as ComponentOptions
+
+// template / render function normalization
+if (__NODE_JS__ && isSSR) {
+ if (Component.render) {
+   instance.render = Component.render as InternalRenderFunction
+ }
+} else if (!instance.render) {
+ // could be set from setup()
+ if (compile && Component.template && !Component.render) {
+   if (__DEV__) {
+     startMeasure(instance, `compile`)
+   }
+   Component.render = compile(Component.template, {
+     isCustomElement: instance.appContext.config.isCustomElement,
+     delimiters: Component.delimiters
+   })
+   if (__DEV__) {
+     endMeasure(instance, `compile`)
+   }
+ }
+
+ instance.render = (Component.render || NOOP) as InternalRenderFunction
+```
+
+代理组件上下文，当渲染函数使用保留字时可以给出提示以及 `unscopables` 的快速访问。
+
+```ts
+// for runtime-compiled render functions using `with` blocks, the render
+// proxy used needs a different `has` handler which is more performant and
+// also only allows a whitelist of globals to fallthrough.
+if (instance.render._rc) {
+  instance.withProxy = new Proxy(
+    instance.ctx,
+    RuntimeCompiledPublicInstanceProxyHandlers
+  )
+}
+
+export const RuntimeCompiledPublicInstanceProxyHandlers = extend(
+  {},
+  PublicInstanceProxyHandlers,
+  {
+    get(target: ComponentRenderContext, key: string) {
+      // fast path for unscopables when using `with` block
+      if ((key as any) === Symbol.unscopables) {
+        return
+      }
+      return PublicInstanceProxyHandlers.get!(target, key, target)
+    },
+    has(_: ComponentRenderContext, key: string) {
+      const has = key[0] !== '_' && !isGloballyWhitelisted(key)
+      if (__DEV__ && !has && PublicInstanceProxyHandlers.has!(_, key)) {
+        warn(
+          `Property ${JSON.stringify(
+            key
+          )} should not start with _ which is a reserved prefix for Vue internals.`
+        )
+      }
+      return has
+    }
+  }
+)
+```
+
+`unscopables` 可以指定使用 `with` 时哪些属性不可被访问，比如：
+
+```js
+var obj = {
+  foo: 1,
+  bar: 2
+};
+
+obj[Symbol.unscopables] = {
+  foo: false,
+  bar: true
+};
+
+with (obj) {
+  console.log(foo); // 1
+  console.log(bar); // ReferenceError: bar is not defined
+}
+```
+
+最后是兼容 Vue2 的 options 配置以及对渲染函数，模板的一些检查和错误提示。
+
+```ts
+// support for 2.x options
+if (__FEATURE_OPTIONS_API__) {
+ currentInstance = instance
+ applyOptions(instance, Component)
+ currentInstance = null
+}
+
+// warn missing template/render
+if (__DEV__ && !Component.render && instance.render === NOOP) {
+ /* istanbul ignore if */
+ if (!compile && Component.template) {
+   warn(
+     `Component provided template option but ` +
+       `runtime compilation is not supported in this build of Vue.` +
+       (__ESM_BUNDLER__
+         ? ` Configure your bundler to alias "vue" to "vue/dist/vue.esm-bundler.js".`
+         : __ESM_BROWSER__
+           ? ` Use "vue.esm-browser.js" instead.`
+           : __GLOBAL__
+             ? ` Use "vue.global.js" instead.`
+             : ``) /* should not happen */
+   )
+ } else {
+   warn(`Component is missing template or render function.`)
+ }
+}
+```
+
+`componentSetup` 结束后，`App context` 以及 `Component instance` 已经创建完成，`render function` 也已被生成，
+最后就是响应式系统的建立以及根组件的挂载，这些都在下一次要说的 `setupRenderEffect` 中。
