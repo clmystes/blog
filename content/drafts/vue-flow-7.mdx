@@ -1,0 +1,139 @@
+---
+title: Vue 初始化流程（7）
+date: 2020-11-28
+---
+
+初始化只要看 `!instance.isMounted` 部分：
+
+```ts
+const setupRenderEffect: SetupRenderEffectFn = (
+  instance,
+  initialVNode,
+  container,
+  anchor,
+  parentSuspense,
+  isSVG,
+  optimized
+) => {
+  // create reactive effect for rendering
+  instance.update = effect(function componentEffect() {
+    if (!instance.isMounted) {
+      let vnodeHook: VNodeHook | null | undefined
+      const { el, props } = initialVNode
+      const { bm, m, parent } = instance
+
+      // beforeMount hook
+      if (bm) {
+        invokeArrayFns(bm)
+      }
+      // onVnodeBeforeMount
+      if ((vnodeHook = props && props.onVnodeBeforeMount)) {
+        invokeVNodeHook(vnodeHook, parent, initialVNode)
+      }
+
+      // render
+      if (__DEV__) {
+        startMeasure(instance, `render`)
+      }
+      const subTree = (instance.subTree = renderComponentRoot(instance))
+      if (__DEV__) {
+        endMeasure(instance, `render`)
+      }
+
+      if (el && hydrateNode) {
+        if (__DEV__) {
+          startMeasure(instance, `hydrate`)
+        }
+        // vnode has adopted host node - perform hydration instead of mount.
+        hydrateNode(
+          initialVNode.el as Node,
+          subTree,
+          instance,
+          parentSuspense
+        )
+        if (__DEV__) {
+          endMeasure(instance, `hydrate`)
+        }
+      } else {
+        if (__DEV__) {
+          startMeasure(instance, `patch`)
+        }
+        patch(
+          null,
+          subTree,
+          container,
+          anchor,
+          instance,
+          parentSuspense,
+          isSVG
+        )
+        if (__DEV__) {
+          endMeasure(instance, `patch`)
+        }
+        initialVNode.el = subTree.el
+      }
+      // mounted hook
+      if (m) {
+        queuePostRenderEffect(m, parentSuspense)
+      }
+      // onVnodeMounted
+      if ((vnodeHook = props && props.onVnodeMounted)) {
+        queuePostRenderEffect(() => {
+          invokeVNodeHook(vnodeHook!, parent, initialVNode)
+        }, parentSuspense)
+      }
+      // activated hook for keep-alive roots.
+      // #1742 activated hook must be accessed after first render
+      // since the hook may be injected by a child keep-alive
+      const { a } = instance
+      if (
+        a &&
+        initialVNode.shapeFlag & ShapeFlags.COMPONENT_SHOULD_KEEP_ALIVE
+      ) {
+        queuePostRenderEffect(a, parentSuspense)
+      }
+      instance.isMounted = true
+    } else {
+      // updateComponent
+      // This is triggered by mutation of component's own state (next: null)
+      // OR parent calling processComponent (next: VNode)
+      // ...
+    }
+  }, __DEV__ ? createDevEffectOptions(instance) : prodEffectOptions)
+}
+```
+
+触发 `Component` 以及 `VNode` 的相应钩子函数：
+
+```ts
+let vnodeHook: VNodeHook | null | undefined
+const { el, props } = initialVNode
+const { bm, m, parent } = instance
+
+// beforeMount hook
+if (bm) {
+  invokeArrayFns(bm)
+}
+
+// onVnodeBeforeMount
+if ((vnodeHook = props && props.onVnodeBeforeMount)) {
+  invokeVNodeHook(vnodeHook, parent, initialVNode)
+}
+```
+
+## renderComponentRoot
+
+TODO:
+
+```ts
+// render
+if (__DEV__) {
+  startMeasure(instance, `render`)
+}
+const subTree = (instance.subTree = renderComponentRoot(instance))
+if (__DEV__) {
+  endMeasure(instance, `render`)
+}
+```
+
+
