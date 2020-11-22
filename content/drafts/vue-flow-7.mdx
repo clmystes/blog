@@ -103,7 +103,7 @@ const setupRenderEffect: SetupRenderEffectFn = (
 }
 ```
 
-触发 `Component` 以及 `VNode` 的相应钩子函数：
+首先触发了 `Component` 以及 `VNode` 的相应钩子函数：
 
 ```ts
 let vnodeHook: VNodeHook | null | undefined
@@ -121,9 +121,7 @@ if ((vnodeHook = props && props.onVnodeBeforeMount)) {
 }
 ```
 
-## renderComponentRoot
-
-TODO:
+然后运行组件的 `render` 函数获取 `vnode`。
 
 ```ts
 // render
@@ -136,4 +134,31 @@ if (__DEV__) {
 }
 ```
 
+最后运行 `patch` 函数，把 `vnode` 插入到 `DOM` 中，并执行对应钩子
 
+```ts
+patch(
+  null,
+  subTree,
+  container,
+  anchor,
+  instance,
+  parentSuspense,
+  isSVG
+)
+
+// mounted hook
+if (m) {
+  queuePostRenderEffect(m, parentSuspense)
+}
+// onVnodeMounted
+if ((vnodeHook = props && props.onVnodeMounted)) {
+  queuePostRenderEffect(() => {
+    invokeVNodeHook(vnodeHook!, parent, initialVNode)
+  }, parentSuspense)
+}
+
+instance.isMounted = true
+```
+
+`instance.isMounted` 的值更新后，初始化流程结束。
